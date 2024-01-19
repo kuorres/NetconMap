@@ -9,9 +9,13 @@ import plotly.graph_objects as go
 import socket
 import geocoder
 from os import path
-import sys,time
+import sys
+from time import sleep
 
 destinations = []
+memo_destinations = []
+match_myip = geocoder.ip('me')
+
 reader = geolite2.reader()
 
 class NetConMap(QtWidgets.QWidget):
@@ -28,8 +32,10 @@ class NetConMap(QtWidgets.QWidget):
         self._ui_path = RELATIVE_PATH  # Update this as needed
         uic.loadUi(path.join(self._ui_path, 'MainGui.ui'), self)
         self.setWindowTitle("NetConMap v1.1")
+        
         first_processes = get_processes_info()
         self.ProcessInfo(first_processes)
+        self.update_map()
 
         self.thread_process = QThread()
         self.worker_processes = Worker_processes()
@@ -42,7 +48,7 @@ class NetConMap(QtWidgets.QWidget):
         self.worker_map = Worker_map()
         self.worker_map.moveToThread(self.thread_map)
         self.thread_map.started.connect(self.worker_map.run)
-        self.worker_map.map_done.connect(self.MapView)
+        self.worker_map.map_done.connect(self.update_map)
         self.thread_map.start()
         #self.pushButtonProcess.clicked.connect(lambda: ProcessInfo(self))
         #self.pushButtonMap.clicked.connect(lambda: MapView(self))
@@ -54,6 +60,37 @@ class NetConMap(QtWidgets.QWidget):
     
     def MapView(self,map_url):
         self.widgetMap.load(map_url)
+
+    def update_map(self):
+        if match_myip.ok:
+            my_lat = match_myip.lat
+            my_lon = match_myip.lng
+            my_ip = match_myip.ip
+        else:                                
+            my_lat = '0'
+            my_lon = '0'
+            my_ip = "Not Found"
+        fig = go.Figure(go.Scattergeo(mode = "markers+lines",name = "Me "+ my_ip,lon = [my_lon, my_lon],lat = [my_lat, my_lat],marker = {'size': 10}))
+        for coor in memo_destinations:
+            remote = (coor['Remote'],"","")
+            fig.add_trace(go.Scattergeo(
+                mode = "markers+lines",
+                name = coor['name']+" "+remote[0],
+                lon = [my_lon, coor['lon'] ],
+                lat = [my_lat, coor['lat']],
+                marker = {'size': 10}))
+        fig.update_geos(fitbounds="locations")
+        fig.update_layout(
+            margin ={'l':0,'t':0,'b':0,'r':0},
+            height=600,
+            width=1400,
+            mapbox = {'center': {'lon': my_lon, 'lat': my_lat},'style': "stamen-terrain"}
+            )
+        fig.write_html('first_figure.html')
+        print('map updated')
+        map_url = get_map_url()
+        self.MapView(map_url)
+        
 
     def closeEvent(self, event):
         if self.isVisible():
@@ -84,22 +121,19 @@ class Worker_processes(QObject):
     def run(self):
         """Long-running task."""
         while True:
-            time.sleep(1)
-            print('processes')
+            sleep(1)
             processes = get_processes_info()
             self.processes_done.emit(processes)
 
 class Worker_map(QObject):
-    map_done = pyqtSignal(QUrl)
+    map_done = pyqtSignal()
     def __init__(self):
         super(Worker_map, self).__init__()
     def run(self):
         """Long-running task."""
         while True:
-            time.sleep(5)
-            print('map')
-            map_url = get_map()
-            self.map_done.emit(map_url)
+            sleep(2)
+            self.map_done.emit()
 
 def get_size(bytes):
     """
@@ -112,6 +146,8 @@ def get_size(bytes):
 
 def get_processes_info(): # the list the contain all process dictionaries]
     processes = []
+    global destinations  
+    destinations = []
     for process in psutil.process_iter(): # get all process info in one shot
         with process.oneshot():
 
@@ -137,7 +173,7 @@ def get_processes_info(): # the list the contain all process dictionaries]
                 username = process.username()  # get the username of user spawned the process
             except psutil.AccessDenied:
                 username = "N/A"
-            global destinations        
+       
             for conn in process.connections():
 
                 if status == 'running' and conn.status == 'ESTABLISHED' :
@@ -162,7 +198,8 @@ def get_processes_info(): # the list the contain all process dictionaries]
                         remote_ip = ""
 
                     processes.append({'pid': pid, 'name': name, 'cores': cores, 'memory_usage': memory_usage, 'username': username,'Local port':conn.laddr.port, 'Remote IP':remote_ip, 'Remote Port':conn.raddr.port, 'Latitude':R_lat, 'Longitude':R_lon, })
-
+    global memo_destinations
+    memo_destinations = destinations
     return processes
 
 def get_Host_name_IP(remote_ip): 
@@ -180,38 +217,9 @@ def construct_dataframe(processes):
     #df = df[columns.split(",")] # reorder and define used columns
     return df
 
-def get_map():
-    match_myip = geocoder.ip('me')
-
-    if match_myip.ok:
-        my_lat = match_myip.lat
-        my_lon = match_myip.lng
-        my_ip = match_myip.ip
-    else:                                
-        my_lat = '0'
-        my_lon = '0'
-        my_ip = "Not Found"
-
-    fig = go.Figure(go.Scattergeo(mode = "markers+lines",name = "Me "+ my_ip,lon = [my_lon, my_lon],lat = [my_lat, my_lat],marker = {'size': 10}))
-
-    for coor in destinations:
-        remote = (coor['Remote'],"","")
-        fig.add_trace(go.Scattergeo(
-            mode = "markers+lines",
-            name = coor['name']+" "+remote[0],
-            lon = [my_lon, coor['lon'] ],
-            lat = [my_lat, coor['lat']],
-            marker = {'size': 10}))
-
-    fig.update_geos(fitbounds="locations")
-    fig.update_layout(
-        margin ={'l':0,'t':0,'b':0,'r':0},
-        height=600,
-        width=1400,
-        mapbox = {'center': {'lon': my_lon, 'lat': my_lat},'style': "stamen-terrain"}
-        )
-    fig.write_html('first_figure.html')
-
+def get_map_url():
     file_path = path.abspath(path.join(path.dirname(__file__), "first_figure.html"))
     local_url = QUrl.fromLocalFile(file_path)
     return local_url
+
+    
