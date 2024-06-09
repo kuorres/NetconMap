@@ -133,7 +133,7 @@ class Worker_map(QObject):
     def run(self):
         """Long-running task."""
         while True:
-            sleep(2)
+            sleep(5)
             self.map_done.emit()
 
 def get_size(bytes):
@@ -234,7 +234,7 @@ def run_dash():
             dcc.Graph(id='geoscatterplot-graph'),
             dcc.Interval(
                 id='interval-component',
-                interval=1*1000, # in milliseconds
+                interval=1*5000, # in milliseconds
                 n_intervals=0
             )
         ])
