@@ -1,11 +1,13 @@
 from PyQt5 import QtWidgets, uic, QtWebEngineCore
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, QUrl
+import threading
 from PyQt5 import QtWebEngineWidgets
 import psutil
 import pandas as pd
 from PandasModel import PandasModel
 from geolite2 import geolite2
 import plotly.graph_objects as go
+from dash import Dash, dcc, html, Input, Output, callback
 import socket
 import geocoder
 from os import path
@@ -15,7 +17,6 @@ from time import sleep
 destinations = []
 memo_destinations = []
 match_myip = geocoder.ip('me')
-
 reader = geolite2.reader()
 
 class NetConMap(QtWidgets.QWidget):
@@ -50,8 +51,8 @@ class NetConMap(QtWidgets.QWidget):
         self.thread_map.started.connect(self.worker_map.run)
         self.worker_map.map_done.connect(self.update_map)
         self.thread_map.start()
-        #self.pushButtonProcess.clicked.connect(lambda: ProcessInfo(self))
-        #self.pushButtonMap.clicked.connect(lambda: MapView(self))
+
+        threading.Thread(target=run_dash, daemon=True).start()
 
     def ProcessInfo(self,processes):
         df = construct_dataframe(processes)
@@ -67,8 +68,8 @@ class NetConMap(QtWidgets.QWidget):
             my_lon = match_myip.lng
             my_ip = match_myip.ip
         else:                                
-            my_lat = '0'
-            my_lon = '0'
+            my_lat = 0
+            my_lon = 0
             my_ip = "Not Found"
         fig = go.Figure(go.Scattergeo(mode = "markers+lines",name = "Me "+ my_ip,lon = [my_lon, my_lon],lat = [my_lat, my_lat],marker = {'size': 10}))
         for coor in memo_destinations:
@@ -222,4 +223,52 @@ def get_map_url():
     local_url = QUrl.fromLocalFile(file_path)
     return local_url
 
-    
+
+def run_dash():
+    app = Dash()
+    #app = Dash(__name__)
+
+    app.layout = html.Div(
+        html.Div([
+            html.H4('TEST NetConMap Live Feed'),
+            dcc.Graph(id='geoscatterplot-graph'),
+            dcc.Interval(
+                id='interval-component',
+                interval=1*1000, # in milliseconds
+                n_intervals=0
+            )
+        ])
+    )
+    #app.run_server(debug=True)
+    app.run(debug=False)
+
+# Multiple components can update everytime interval gets fired.
+@callback(Output('geoscatterplot-graph', 'figure'),
+              Input('interval-component', 'n_intervals'))
+def update_graph_live(n):
+    if match_myip.ok:
+        my_lat = match_myip.lat
+        my_lon = match_myip.lng
+        my_ip = match_myip.ip
+    else:                                
+        my_lat = 0
+        my_lon = 0
+        my_ip = "Not Found" 
+    fig = go.Figure(go.Scattergeo(mode = "markers+lines",name = "Me "+ my_ip,lon = [my_lon, my_lon],lat = [my_lat, my_lat],marker = {'size': 10}))
+    for coor in memo_destinations:
+        remote = (coor['Remote'],"","")
+        fig.add_trace(go.Scattergeo(
+            mode = "markers+lines",
+            name = coor['name']+" "+remote[0],
+            lon = [my_lon, coor['lon'] ],
+            lat = [my_lat, coor['lat']],
+            marker = {'size': 10}))
+    fig.update_geos(fitbounds="locations")
+    fig.update_layout(
+        margin ={'l':0,'t':0,'b':0,'r':0},
+        height=600,
+        width=1400,
+        mapbox = {'center': {'lon': my_lon, 'lat': my_lat},'style': "stamen-terrain"}
+        )
+    return fig
+     
